@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>GeoEnvelope</title>
+        <meta name="author" content="Trevor">
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="description" content="A Maps-to-Mail App">
+		<meta name="keywords" content="geoenvelope, geo, envelope, geography, template, generator, map, pin">
+        <style>
+            body {
+                font-family: sans-serif;
+            }
+            #solarCheckMark {
+                position: absolute;
+                top: 50px;
+                right: 40px;
+            }
+            .pac-card {
+                background-color: #fff;
+                border: 0;
+                border-radius: 2px;
+                box-shadow: 0 1px 4px -1px rgba(0, 0, 0, 0.3);
+                margin: 10px;
+                padding: 0 0.5em;
+                font: 400 18px Roboto, Arial, sans-serif;
+                overflow: hidden;
+                font-family: Roboto;
+                padding: 0;
+            }
+
+            #pac-container {
+                padding-bottom: 12px;
+                margin-right: 12px;
+            }
+
+            .pac-controls {
+                display: inline-block;
+                padding: 5px 11px;
+            }
+
+            .pac-controls label {
+                font-family: Roboto;
+                font-size: 13px;
+                font-weight: 300;
+            }
+
+            #pac-input {
+                background-color: #fff;
+                font-family: Roboto;
+                font-size: 15px;
+                font-weight: 300;
+                margin-left: 12px;
+                padding: 0 11px 0 13px;
+                text-overflow: ellipsis;
+                width: 400px;
+            }
+
+            #pac-input:focus {
+                border-color: #4d90fe;
+            }
+            #map {
+                height: 700px;
+                width: 100%;
+                margin-bottom: 20px;
+            }
+            #functionRow {
+                display: flex;
+                align-items: center;
+            }
+            #returnAddress {
+                display: flex;
+                align-items: center;
+                margin-right: 30px;
+            }
+            label {
+                padding-right: 10px;
+            }
+            button {
+                display: inline-block;
+                margin-right: 10px;
+                margin-bottom: 10px;
+            }
+            button:last-child {
+                display: block;
+            }
+            #addresses {
+                margin-top: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>GeoEnvelope Address Generator</h1>
+
+        <h4>Click to add/remove pins.</h4>
+
+        <!--<div id="solarCheckMark">
+		<input type="checkbox" id="checkmark" class="checkmark-checkbox">
+		<label for="checkmark" class="checkmark-button">Solar View</label>
+	</div>-->
+
+        <input id="pac-input" class="controls" type="text" placeholder="Search Address" />
+        <div id="map"></div>
+
+        <div id="functionRow">
+            <div id="returnAddress">
+                <label for="returnAddressInput">Return Address: </label>
+                <textarea id="returnAddressInput" rows="4" cols="25"></textarea>
+            </div>
+
+            <button id="generateButton">Generate</button>
+            <input type="file" id="loadFileInput" accept=".txt" style="display: none;" />
+            <button id="loadFileButton">Load File - Pins + Data</button>
+            <input type="file" id="loadFilePinsInput" accept=".txt" style="display: none;" />
+            <button id="loadFilePinsButton">Load File - Pins Only</button>
+            <button id="clearButton">Clear All</button>
+        </div>
+
+        <div id="addresses"></div>
+
+        <script>
+            var map;
+            var addressMarkerData = {
+                addresses: [],
+                markers: [],
+            };
+
+            /*
+		document.getElementById("checkmark").addEventListener("change", function() {
+			var layover = document.getElementById("solarLayer");
+			if (this.checked) {
+				// Checkbox is checked, show the solar layover
+				layover.style.display = "block";
+			} else {
+				// Checkbox is unchecked, hide the solar layover
+				layover.style.display = "none";
+			}
+		});
+		*/
+
+            // Add event listener to the "Generate" button
+            document.getElementById("generateButton").addEventListener("click", function () {
+                generateHtmlFile();
+                generateTxtFile();
+            });
+            // Add event listener to the "Clear All" button
+            document.getElementById("clearButton").addEventListener("click", function () {
+                clear();
+            });
+            // Add event listener to the "Load File" button
+            document.getElementById("loadFileButton").addEventListener("click", function () {
+                document.getElementById("loadFileInput").click();
+            });
+
+            // Add event listener to the "loadFileMarkersOnly" button
+            document.getElementById("loadFilePinsButton").addEventListener("click", function () {
+                document.getElementById("loadFilePinsInput").click();
+            });
+
+            document.getElementById("loadFileInput").addEventListener("change", async function (event) {
+                const selectedFile = event.target.files[0];
+
+                if (selectedFile) {
+                    try {
+                        const fileContent = await loadFile(selectedFile);
+                        const fileContentArr = fileContent.split("|");
+                        applyFile(fileContentArr, true);
+                        //console.log('File content:', fileContentArr);
+                    } catch (error) {
+                        console.error("Error loading file:", error);
+                    }
+                }
+            });
+
+            document.getElementById("loadFilePinsInput").addEventListener("change", async function (event) {
+                const selectedFile = event.target.files[0];
+
+                if (selectedFile) {
+                    try {
+                        const fileContent = await loadFile(selectedFile);
+                        const fileContentArr = fileContent.split("|");
+                        applyFile(fileContentArr, false);
+                        //console.log('File content:', fileContentArr);
+                    } catch (error) {
+                        console.error("Error loading file:", error);
+                    }
+                }
+            });
+
+            function initAutocomplete() {
+                // Initialize map
+                map = new google.maps.Map(document.getElementById("map"), {
+                    center: { lat: 40, lng: -90 }, // Starting coordinates
+                    zoom: 4,
+                    tilt: 0,
+                    mapTypeControl: true,
+                    mapTypeControlOptions: {
+                        mapTypeIds: ["satellite", "hybrid", "terrain"],
+                    },
+                    mapTypeId: "satellite",
+                });
+
+                var styledMapType = new google.maps.StyledMapType([{ elementType: "labels", stylers: [{ visibility: "on" }] }], { name: "Satellite with Labels" });
+
+                map.mapTypes.set("hybrid", styledMapType);
+                map.setMapTypeId("hybrid");
+
+                // Create the search box and link it to the UI element.
+                const input = document.getElementById("pac-input");
+                const searchBox = new google.maps.places.SearchBox(input);
+
+                map.controls[google.maps.ControlPosition.TOP_CENTER].push(input);
+                // Bias the SearchBox results towards current map's viewport.
+                map.addListener("bounds_changed", () => {
+                    searchBox.setBounds(map.getBounds());
+                });
+
+                // Listen for the event fired when the user selects a prediction and retrieve
+                // more details for that place.
+                searchBox.addListener("places_changed", () => {
+                    const places = searchBox.getPlaces();
+
+                    if (places.length == 0) {
+                        return;
+                    }
+
+                    // For each place, get the icon, name and location.
+                    const bounds = new google.maps.LatLngBounds();
+
+                    places.forEach((place) => {
+                        if (!place.geometry || !place.geometry.location) {
+                            console.log("Returned place contains no geometry");
+                            return;
+                        }
+
+                        if (place.geometry.viewport) {
+                            // Only geocodes have viewport.
+                            bounds.union(place.geometry.viewport);
+                        } else {
+                            bounds.extend(place.geometry.location);
+                        }
+                    });
+                    map.fitBounds(bounds);
+                });
+
+                // Define solar layover
+                /*
+			var solarLayer = new google.maps.SolarLayer({
+				map: map
+			});
+			*/
+
+                // Add click event listener to map
+                map.addListener("click", function (event) {
+                    // Retrieve address for clicked position
+                    geoLocation(event.latLng);
+                    console.log("added marker and address");
+                });
+            }
+
+            window.initAutocomplete = initAutocomplete;
+
+            function geoLocation(location) {
+                var geocoder = new google.maps.Geocoder();
+                geocoder.geocode({ location: location }, function (results, status) {
+                    if (status === "OK") {
+                        if (results[0]) {
+                            // Extract formatted address from results
+                            var address = results[0].formatted_address;
+                            addAddress(address);
+                            addMarker(location, true);
+                        } else {
+                            console.log("No results found");
+                        }
+                    } else {
+                        console.log("Geocoder failed due to: " + status);
+                    }
+                });
+            }
+
+            function geoAddress(address, addData) {
+                var geocoder = new google.maps.Geocoder();
+                geocoder.geocode({ address: address }, function (results, status) {
+                    if (status === "OK" && results && results.length > 0) {
+                        var location = results[0].geometry.location;
+                        if (addData) {
+                            addAddress(address);
+                        } else {
+                            addressMarkerData.addresses.push("");
+                        }
+                        addMarker(location, addData);
+                    } else {
+                        console.error("Geocode was not successful for the following reason: " + status);
+                        console.error("Address:", address);
+                    }
+                });
+            }
+
+            function addAddress(address) {
+                address = address.toUpperCase();
+                if (!/\d$/.test(address)) {
+                    address = address.substring(0, address.lastIndexOf(","));
+                }
+                addressMarkerData.addresses.push(address.trim()); // Trim any leading/trailing whitespace
+                displayAddresses();
+            }
+
+            function addMarker(location, addData) {
+                var marker = new google.maps.Marker({
+                    position: location,
+                    map: map,
+                    icon: !addData ? "http://maps.google.com/mapfiles/ms/icons/blue-dot.png" : undefined,
+                });
+
+                addressMarkerData.markers.push(marker);
+                //console.log(marker);
+                // Add click event listener to the marker
+                marker.addListener("click", function () {
+                    removeDataPoint(marker);
+                });
+            }
+
+            // Function to remove a marker from the map and from the markers array
+            function removeDataPoint(marker) {
+                // Find the index of the marker in the markers array
+                var index = addressMarkerData.markers.indexOf(marker);
+                if (index > -1) {
+                    // Remove the marker from the map
+                    marker.setMap(null);
+
+                    console.log("marker removed at index: " + index + " - " + addressMarkerData.markers[index].position);
+                    // Remove the marker from the markers array
+                    addressMarkerData.markers.splice(index, 1);
+
+                    console.log("address removed at index: " + index + " - " + addressMarkerData.addresses[index]);
+                    // Remove the corresponding address from the addresses array
+                    addressMarkerData.addresses.splice(index, 1);
+                }
+                displayAddresses();
+            }
+
+            function clear() {
+                // Remove all markers from the map
+                for (var i = 0; i < addressMarkerData.markers.length; i++) {
+                    //Remove the marker from the map
+                    marker = addressMarkerData.markers[i];
+                    marker.setMap(null);
+                }
+
+                // Clear all arrays
+                addressMarkerData.addresses = [];
+                addressMarkerData.markers = [];
+                console.log("reset map and addressMarkerData.addresses = [], addressMarkerData.markers = []");
+                displayAddresses();
+            }
+
+            function displayAddresses() {
+                var addressesDiv = document.getElementById("addresses");
+                addressesDiv.innerHTML = ""; // Clear previous addresses
+                if (addressMarkerData.addresses !== null && addressMarkerData.addresses !== undefined) {
+                    addressMarkerData.addresses.forEach(function (address) {
+                        var p = document.createElement("p");
+                        p.textContent = address;
+                        addressesDiv.appendChild(p);
+                    });
+                }
+            }
+
+            function generateHtmlFile() {
+                var returnAddr = document.getElementById("returnAddressInput").value.replace(/\n/g, "<br>").toUpperCase();
+                // Create a blob containing the addresses
+                var htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Envelope Template</title>
+<style>
+	body {
+		font-family: Arial, sans-serif;
+	}
+
+	.sending_address, .return_address {
+		/* Other styles */
+		font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+		font-size: 16px; /* Adjust font size as needed */
+		font-weight: 400; /* Normal font weight */
+		line-height: 1.5; /* Adjust line height for better readability */
+		color: #333; /* Dark gray color for better contrast */
+	}
+
+  .envelope {
+	height: 400px;
+    width: 912px;
+    /* border: 1px solid black; */
+    /* margin: 5px; Adjust spacing between envelopes */
+    position: relative;
+  }
+
+  .return_address {
+    position: absolute;
+    top: 0px;
+    left: 25px;
+    /* border: 1px solid black; Visible border box */
+    box-sizing: border-box;
+  }
+  
+  .sending_address {
+    position: absolute;
+    top: 50%; /* Center vertically */
+    left: 48%; /* Center horizontally */
+    transform: translate(-50%, -50%); /* Move back by half of its own width and height */
+    /* border: 1px solid black;  Visible border box */
+    box-sizing: border-box;
+	}
+	
+</style>
+</head>
+<body>
+`;
+
+                // Loop through each address in the file content array and concatenate them with <div> tags
+                addressMarkerData.addresses.forEach(function (address) {
+                    var streetCommaIndex = address.indexOf(", ");
+                    address = address.substring(0, streetCommaIndex) + "<br>" + address.substring(streetCommaIndex + 2, address.length);
+
+                    // Add a <div> tag with the current element
+                    htmlContent +=
+                        `
+		<div class="envelope">
+			<div class="return_address">
+				<p>` +
+                        returnAddr +
+                        `</p>
+			</div>
+			<div class="sending_address">
+				<p><!--ADDRESS_HEADER_LINE_HERE<br>-->` +
+                        address +
+                        `</p>
+			</div>
+		</div>
+		`;
+                });
+
+                htmlContent += `
+</body>
+</html>
+`;
+
+                // Create a Blob with the HTML content
+                var blob = new Blob([htmlContent], { type: "text/html" });
+
+                // Create a data URL for the Blob
+                var url = URL.createObjectURL(blob);
+
+                // Open the content in a new tab
+                window.open(url, "_blank");
+
+                // Clean up by revoking the object URL
+                URL.revokeObjectURL(url);
+            }
+
+            function generateTxtFile() {
+                // Create a blob containing the addresses
+                var addressString = addressMarkerData.addresses.join("|");
+                var blob = new Blob([addressString], { type: "text/plain" });
+
+                // Create a link element to trigger the download
+                var a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "address_list.txt"; // Set the download filename
+
+                // Trigger the download
+                a.click();
+                console.log("generated new files");
+            }
+
+            function loadFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const fileContent = event.target.result;
+                        resolve(fileContent);
+                    };
+                    reader.onerror = (error) => {
+                        reject(error);
+                    };
+                    reader.readAsText(file);
+                });
+            }
+
+            function applyFile(fileContentArr, addData) {
+                var i = 0;
+                fileContentArr.forEach(function (address) {
+                    geoAddress(address, addData);
+                    i++;
+                });
+                console.log("added " + i + " points of data");
+                displayAddresses();
+            }
+        </script>
+        <!-- Replace 'YOUR_API_KEY' with your actual API key -->
+        <script async src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&loading=async&callback=initAutocomplete&libraries=places&v=weekly"></script>
+    </body>
+</html>
